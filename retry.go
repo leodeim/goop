@@ -1,10 +1,13 @@
 package goop
 
 import (
+	"bytes"
 	"cmp"
 	"context"
+	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -14,6 +17,35 @@ type HTTP struct {
 	Client     *http.Client
 	MaxRetries int
 	Backoff    time.Duration
+}
+
+// post sends a JSON body and returns the response if it is a 200. Any other status is an *APIError.
+func (h HTTP) post(ctx context.Context, url string, headers map[string]string, body []byte) (*http.Response, error) {
+	resp, err := h.send(ctx, func() (*http.Request, error) {
+		hr, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		hr.Header.Set("content-type", "application/json")
+		for k, v := range headers {
+			hr.Header.Set(k, v)
+		}
+		return hr, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		defer resp.Body.Close()
+		return nil, readAPIError(resp)
+	}
+
+	return resp, nil
+}
+
+func readAPIError(resp *http.Response) error {
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	return &APIError{Status: resp.StatusCode, Body: strings.TrimSpace(string(body))}
 }
 
 func (h HTTP) send(ctx context.Context, build func() (*http.Request, error)) (*http.Response, error) {

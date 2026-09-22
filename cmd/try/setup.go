@@ -66,14 +66,18 @@ func newAgent(name, model string) (*goop.Agent, error) {
 		}
 		agent.Provider = &goop.Anthropic{APIKey: key, BaseURL: baseURL}
 		agent.Model = cmp.Or(model, "claude-sonnet-5")
-	case "openai":
+	case "openai", "responses":
 		if key == "" && baseURL == "" { // a local server needs no key
 			return nil, fmt.Errorf("GOOP_API_KEY or GOOP_BASE_URL is not set; copy .env.example to %s", defaultEnvFile)
 		}
-		agent.Provider = &goop.OpenAI{APIKey: key, BaseURL: baseURL}
+		if name == "openai" {
+			agent.Provider = &goop.OpenAI{APIKey: key, BaseURL: baseURL}
+		} else {
+			agent.Provider = &goop.OpenAIResponses{APIKey: key, BaseURL: baseURL}
+		}
 		agent.Model = cmp.Or(model, "gpt-5")
 	default:
-		return nil, fmt.Errorf("unknown provider %q (want anthropic or openai)", name)
+		return nil, fmt.Errorf("unknown provider %q (want anthropic, openai or responses)", name)
 	}
 	return agent, nil
 }

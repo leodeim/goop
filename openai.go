@@ -1,14 +1,12 @@
 package goop
 
 import (
-	"bytes"
 	"cmp"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"strings"
 )
 
@@ -30,27 +28,24 @@ func (p *OpenAI) Stream(ctx context.Context, req Request, emit func(Event)) (Rep
 	}
 
 	base := strings.TrimSuffix(cmp.Or(p.BaseURL, "https://api.openai.com/v1"), "/")
-
-	resp, err := p.send(ctx, func() (*http.Request, error) {
-		hr, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/chat/completions", bytes.NewReader(body))
-		if err != nil {
-			return nil, err
-		}
-		hr.Header.Set("content-type", "application/json")
-		if p.APIKey != "" {
-			hr.Header.Set("authorization", "Bearer "+p.APIKey)
-		}
-		return hr, nil
-	})
+	resp, err := p.post(ctx, base+"/chat/completions", bearer(p.APIKey), body)
 	if err != nil {
 		return Reply{}, err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return Reply{}, readAPIError(resp)
-	}
 
 	return parseOpenAIStream(resp.Body, emit)
+}
+
+func bearer(key string) map[string]string {
+	if key == "" {
+		return nil
+	}
+	return map[string]string{"authorization": "Bearer " + key}
+}
+
+func dataURL(mediaType string, data []byte) string {
+	return "data:" + mediaType + ";base64," + base64.StdEncoding.EncodeToString(data)
 }
 
 func (p *OpenAI) body(req Request) ([]byte, error) {
@@ -155,7 +150,7 @@ func openaiMessages(m Message) ([]map[string]any, error) {
 		case Image:
 			url := b.URL
 			if url == "" {
-				url = "data:" + b.MediaType + ";base64," + base64.StdEncoding.EncodeToString(b.Data)
+				url = dataURL(b.MediaType, b.Data)
 			}
 			parts = append(parts, map[string]any{"type": "image_url", "image_url": map[string]any{"url": url}})
 

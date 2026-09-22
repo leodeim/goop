@@ -31,7 +31,7 @@ type Image struct {
 	URL       string
 }
 
-// Document is a file (PDF etc.) for the model to read. Only Anthropic supports it.
+// Document is a file (PDF etc.) for the model to read. Anthropic and OpenAIResponses support it.
 type Document struct {
 	MediaType string // defaults to application/pdf
 	Data      []byte

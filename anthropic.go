@@ -1,14 +1,12 @@
 package goop
 
 import (
-	"bytes"
 	"cmp"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"strings"
 )
 
@@ -31,24 +29,14 @@ func (p *Anthropic) Stream(ctx context.Context, req Request, emit func(Event)) (
 	}
 
 	base := strings.TrimSuffix(cmp.Or(p.BaseURL, "https://api.anthropic.com"), "/")
-
-	resp, err := p.send(ctx, func() (*http.Request, error) {
-		hr, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/v1/messages", bytes.NewReader(body))
-		if err != nil {
-			return nil, err
-		}
-		hr.Header.Set("content-type", "application/json")
-		hr.Header.Set("anthropic-version", "2023-06-01")
-		hr.Header.Set("x-api-key", p.APIKey)
-		return hr, nil
-	})
+	resp, err := p.post(ctx, base+"/v1/messages", map[string]string{
+		"anthropic-version": "2023-06-01",
+		"x-api-key":         p.APIKey,
+	}, body)
 	if err != nil {
 		return Reply{}, err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return Reply{}, readAPIError(resp)
-	}
 
 	return parseAnthropicStream(resp.Body, emit)
 }
@@ -315,9 +303,4 @@ func anthropicStop(s string) StopReason {
 		return StopMaxTokens
 	}
 	return StopReason(s)
-}
-
-func readAPIError(resp *http.Response) error {
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	return &APIError{Status: resp.StatusCode, Body: strings.TrimSpace(string(body))}
 }
