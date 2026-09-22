@@ -59,6 +59,11 @@ func newAgent(name, model string) (*goop.Agent, error) {
 		System: cmp.Or(os.Getenv("GOOP_SYSTEM"), "You are a terse assistant. Use the tools when they help."),
 		Tools:  tools(),
 	}
+	if jevKey, jevURL := os.Getenv("GOOP_JEV_KEY"), os.Getenv("GOOP_JEV_URL"); jevKey != "" || jevURL != "" {
+		jev := &goop.Jev{APIKey: jevKey, URL: jevURL, Model: os.Getenv("GOOP_JEV_MODEL")}
+		agent.Tools = append(agent.Tools, jev.Tool())
+		agent.OnToolCall = jev.Gate("This tool call is reasonable for an assistant to make on the user's behalf.", 0.5)
+	}
 	switch name {
 	case "anthropic":
 		if key == "" {

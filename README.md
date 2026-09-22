@@ -17,7 +17,7 @@ which also covers OpenRouter, LM Studio, Ollama and other compatible servers).
 - `Done` carries the whole conversation and token usage; pass it back in to
   continue the chat.
 - `NewTool` infers a JSON schema from a Go struct: json tag names, `desc`
-  tags as descriptions, pointer fields optional.
+  tags as descriptions, pointer and `omitempty` fields optional.
 - Tool errors go back to the model as error results; `OnToolCall` can
   inspect, rewrite or refuse any call.
 - `MaxTurns` and `Budget` (total tokens) bound a run; both return a
@@ -30,6 +30,9 @@ which also covers OpenRouter, LM Studio, Ollama and other compatible servers).
 - Anthropic requests set prompt-cache breakpoints; OpenAI requests use
   `max_completion_tokens` and stream reasoning deltas where servers send them.
 - Breaking out of the `range` loop cancels the request.
+- `Jev` calls TypeSafe's System One model (or a local laya-mlx server) for
+  calibrated yes/no, choice and score decisions. `Jev.Gate` plugs into
+  `OnToolCall` as a fast approval check; `Jev.Tool` lets the model ask it.
 
 ## Example
 

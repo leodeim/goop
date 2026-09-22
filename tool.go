@@ -17,7 +17,7 @@ type Tool struct {
 }
 
 // NewTool builds a Tool whose input schema is derived from the struct type In. Field names
-// come from the json tag, descriptions from the desc tag, and pointer fields are optional.
+// come from the json tag, descriptions from the desc tag, and pointer or omitempty fields are optional.
 func NewTool[In any](name, description string, fn func(ctx context.Context, in In) (string, error)) (Tool, error) {
 	rt := reflect.TypeFor[In]()
 	if rt.Kind() != reflect.Struct {
@@ -63,6 +63,8 @@ func schemaOf(t reflect.Type, seen map[reflect.Type]bool) (map[string]any, error
 		return map[string]any{"type": "integer"}, nil
 	case reflect.Float32, reflect.Float64:
 		return map[string]any{"type": "number"}, nil
+	case reflect.Interface:
+		return map[string]any{}, nil // any JSON value
 
 	case reflect.Slice, reflect.Array:
 		items, err := schemaOf(t.Elem(), seen)
@@ -106,7 +108,7 @@ func structSchema(t reflect.Type, seen map[reflect.Type]bool) (map[string]any, e
 			continue
 		}
 
-		name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
+		name, opts, _ := strings.Cut(f.Tag.Get("json"), ",")
 		if name == "-" {
 			continue
 		}
@@ -123,7 +125,7 @@ func structSchema(t reflect.Type, seen map[reflect.Type]bool) (map[string]any, e
 		}
 
 		properties[name] = prop
-		if f.Type.Kind() != reflect.Pointer {
+		if f.Type.Kind() != reflect.Pointer && !strings.Contains(opts, "omitempty") {
 			required = append(required, name)
 		}
 	}

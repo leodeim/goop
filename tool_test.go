@@ -87,6 +87,31 @@ func TestSchemaInference(t *testing.T) {
 	}
 }
 
+func TestSchemaAnyAndOmitempty(t *testing.T) {
+	tool, err := NewTool("t", "d", func(_ context.Context, in struct {
+		Value any    `json:"value"`
+		Note  string `json:"note,omitempty"`
+	}) (string, error) {
+		return "", nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Properties map[string]map[string]any `json:"properties"`
+		Required   []string                  `json:"required"`
+	}
+	if err := json.Unmarshal(tool.Schema, &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Properties["value"]) != 0 {
+		t.Fatalf("any field schema = %v, want empty (any value)", got.Properties["value"])
+	}
+	if len(got.Required) != 1 || got.Required[0] != "value" {
+		t.Fatalf("required = %v, want only value", got.Required)
+	}
+}
+
 func TestSchemaRejectsUnsupported(t *testing.T) {
 	_, err := NewTool("t", "d", func(_ context.Context, in struct {
 		Ch chan int `json:"ch"`
