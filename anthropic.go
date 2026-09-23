@@ -10,8 +10,10 @@ import (
 	"strings"
 )
 
-// AnthropicMaxTokensFallback is the max_tokens sent when Request.MaxTokens is 0. The API requires the field.
-const AnthropicMaxTokensFallback = 64000
+// AnthropicMaxTokensFallback is the max_tokens sent when Request.MaxTokens is 0. The API requires
+// the field and rejects values above the model's output limit, so this is the lowest limit among
+// current models; set Agent.MaxTokens to go higher.
+const AnthropicMaxTokensFallback = 32000
 
 // Anthropic is a Provider for the Messages API.
 type Anthropic struct {
@@ -265,7 +267,10 @@ func parseAnthropicStream(r io.Reader, emit func(Event)) (Reply, error) {
 	for _, b := range blocks {
 		switch b.kind {
 		case "text":
-			reply.Message.Blocks = append(reply.Message.Blocks, Text{Text: b.text.String()})
+			// the API rejects empty text blocks when they are sent back
+			if b.text.Len() > 0 {
+				reply.Message.Blocks = append(reply.Message.Blocks, Text{Text: b.text.String()})
+			}
 		case "tool_use":
 			reply.Message.Blocks = append(reply.Message.Blocks, ToolUse{
 				ID:    b.id,

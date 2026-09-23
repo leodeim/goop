@@ -55,6 +55,10 @@ func (a *Agent) Run(ctx context.Context, prior []Message, input ...Block) iter.S
 		tools := make(map[string]Tool, len(a.Tools))
 		defs := make([]ToolDef, len(a.Tools))
 		for i, t := range a.Tools {
+			if err := t.validate(); err != nil {
+				yield(nil, err)
+				return
+			}
 			if _, dup := tools[t.Name]; dup {
 				yield(nil, fmt.Errorf("goop: two tools named %q", t.Name))
 				return
@@ -106,10 +110,12 @@ func (a *Agent) Run(ctx context.Context, prior []Message, input ...Block) iter.S
 			// Tool calls in a max_tokens reply are usually cut off mid-JSON. Drop them, otherwise
 			// the conversation can't be sent back.
 			if reply.StopReason == StopMaxTokens {
-				reply.Message.Blocks = slices.DeleteFunc(slices.Clone(reply.Message.Blocks), func(b Block) bool {
-					_, isUse := b.(ToolUse)
-					return isUse
-				})
+				reply.Message.Blocks = slices.DeleteFunc(slices.Clone(reply.Message.Blocks), isToolUse)
+			}
+			// Some OpenAI-compatible servers report "stop" alongside tool calls. Unanswered calls
+			// would leave a history the API rejects, so any surviving call means tool use.
+			if slices.ContainsFunc(reply.Message.Blocks, isToolUse) {
+				reply.StopReason = StopToolUse
 			}
 			// both APIs reject an assistant message with empty content
 			if len(reply.Message.Blocks) > 0 {
@@ -165,11 +171,22 @@ func (a *Agent) Run(ctx context.Context, prior []Message, input ...Block) iter.S
 	}
 }
 
-func callTool(ctx context.Context, tools map[string]Tool, use ToolUse) ToolResult {
+func isToolUse(b Block) bool {
+	_, ok := b.(ToolUse)
+	return ok
+}
+
+func callTool(ctx context.Context, tools map[string]Tool, use ToolUse) (result ToolResult) {
 	tool, ok := tools[use.Name]
 	if !ok {
 		return toolError(use.ID, "unknown tool "+use.Name)
 	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			result = toolError(use.ID, fmt.Sprintf("tool panicked: %v", r))
+		}
+	}()
 
 	out, err := tool.Run(ctx, use.Input)
 	if err != nil {

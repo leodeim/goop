@@ -3,9 +3,11 @@ package goop
 import (
 	"context"
 	"encoding/json"
+	"net/netip"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestSchemaInference(t *testing.T) {
@@ -195,5 +197,76 @@ func TestToolRunUnmarshals(t *testing.T) {
 	}
 	if _, err := tool.Run(t.Context(), json.RawMessage(`{"a":"x"}`)); err == nil {
 		t.Fatal("bad input did not error")
+	}
+}
+
+func TestSchemaCustomEncodings(t *testing.T) {
+	tool, err := NewTool("t", "d", func(_ context.Context, in struct {
+		Blob []byte          `json:"blob"`
+		Raw  json.RawMessage `json:"raw"`
+		When time.Time       `json:"when"`
+		Addr netip.Addr      `json:"addr"`
+		Opt  int             `json:"opt,omitzero"`
+	}) (string, error) {
+		return "", nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"additionalProperties":false,"properties":{` +
+		`"addr":{"type":"string"},"blob":{"contentEncoding":"base64","type":"string"},"opt":{"type":"integer"},` +
+		`"raw":{},"when":{"format":"date-time","type":"string"}},` +
+		`"required":["blob","raw","when","addr"],"type":"object"}`
+	if string(tool.Schema) != want {
+		t.Fatalf("schema\n got %s\nwant %s", tool.Schema, want)
+	}
+	if _, err := tool.Run(t.Context(), json.RawMessage(`{"blob":"aGk=","raw":[1],"when":"2026-01-02T03:04:05Z","addr":"10.0.0.1"}`)); err != nil {
+		t.Fatalf("input matching the schema failed: %v", err)
+	}
+}
+
+func TestToolRunValidatesInput(t *testing.T) {
+	type item struct {
+		ID   int     `json:"id"`
+		Note *string `json:"note"`
+	}
+	var got []item
+	tool, err := NewTool("t", "d", func(_ context.Context, in struct {
+		Name  string          `json:"name"`
+		Inner *item           `json:"inner"`
+		Items []item          `json:"items,omitempty"`
+		ByKey map[string]item `json:"by_key,omitempty"`
+	}) (string, error) {
+		got = in.Items
+		return "ok", nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		input, wantErr string
+	}{
+		{`{"name":"a"}`, ""},
+		{`{"name":"a","inner":null,"items":[{"id":1,"note":null}]}`, ""},
+		{``, "missing required field name"},
+		{`{"name":null}`, "missing required field name"},
+		{`{"name":"a","typo":1}`, "unknown field"},
+		{`{"name":"a","inner":{"note":"x"}}`, "missing required field inner.id"},
+		{`{"name":"a","items":[{"id":1},{}]}`, "missing required field items.1.id"},
+		{`{"name":"a","by_key":{"k":{}}}`, "missing required field by_key.k.id"},
+		{`{"name":"a","items":[{"id":1,"extra":true}]}`, "unknown field"},
+	}
+	for _, tt := range tests {
+		_, err := tool.Run(t.Context(), json.RawMessage(tt.input))
+		switch {
+		case tt.wantErr == "" && err != nil:
+			t.Errorf("%s: unexpected error %v", tt.input, err)
+		case tt.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tt.wantErr)):
+			t.Errorf("%s: error = %v, want %q", tt.input, err, tt.wantErr)
+		}
+	}
+	if len(got) != 1 || got[0].ID != 1 {
+		t.Fatalf("items = %+v", got)
 	}
 }

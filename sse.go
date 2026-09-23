@@ -14,9 +14,13 @@ var ErrTruncatedStream = errors.New("goop: stream ended before its terminal even
 // ErrStreamDone is returned by an SSE callback to stop scanning without an error.
 var ErrStreamDone = errors.New("goop: stream done")
 
+// maxSSELine bounds one SSE line. Responses sends the whole output, encrypted reasoning
+// included, in a single response.completed line, so this has to fit the largest answer.
+const maxSSELine = 64 << 20
+
 func scanSSE(r io.Reader, fn func(data string) error) error {
 	scanner := bufio.NewScanner(r)
-	scanner.Buffer(make([]byte, 0, 64<<10), 1<<20)
+	scanner.Buffer(make([]byte, 0, 64<<10), maxSSELine)
 	var data []string
 
 	for scanner.Scan() {

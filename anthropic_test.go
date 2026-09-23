@@ -380,3 +380,29 @@ func TestAnthropicRejectsUnknownBlock(t *testing.T) {
 type fakeBlock struct{}
 
 func (fakeBlock) block() {}
+
+func TestAnthropicDropsEmptyText(t *testing.T) {
+	stream := `event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_1","name":"f"}}
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"tool_use"}}
+
+event: message_stop
+data: {"type":"message_stop"}
+
+`
+	reply, err := parseAnthropicStream(strings.NewReader(stream), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reply.Message.Blocks) != 1 {
+		t.Fatalf("blocks = %+v, want only the tool_use", reply.Message.Blocks)
+	}
+	if _, ok := reply.Message.Blocks[0].(ToolUse); !ok {
+		t.Fatalf("block = %+v", reply.Message.Blocks[0])
+	}
+}

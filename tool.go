@@ -1,11 +1,16 @@
 package goop
 
 import (
+	"bytes"
 	"context"
+	"encoding"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
+	"time"
 )
 
 // Tool is a function exposed to the model.
@@ -16,8 +21,21 @@ type Tool struct {
 	Run         func(ctx context.Context, input json.RawMessage) (string, error)
 }
 
+func (t Tool) validate() error {
+	switch {
+	case t.Name == "":
+		return errors.New("goop: tool with an empty name")
+	case t.Run == nil:
+		return fmt.Errorf("goop: tool %s has no Run func", t.Name)
+	case !json.Valid(t.Schema) || !bytes.HasPrefix(bytes.TrimSpace(t.Schema), []byte("{")):
+		return fmt.Errorf("goop: tool %s: Schema must be a JSON object", t.Name)
+	}
+	return nil
+}
+
 // NewTool builds a Tool whose input schema is derived from the struct type In. Field names
-// come from the json tag, descriptions from the desc tag, and pointer or omitempty fields are optional.
+// come from the json tag, descriptions from the desc tag, and pointer, omitempty or omitzero
+// fields are optional. Input with unknown or missing required fields is rejected before fn runs.
 func NewTool[In any](name, description string, fn func(ctx context.Context, in In) (string, error)) (Tool, error) {
 	rt := reflect.TypeFor[In]()
 	if rt.Kind() != reflect.Struct {
@@ -39,18 +57,100 @@ func NewTool[In any](name, description string, fn func(ctx context.Context, in I
 		Description: description,
 		Schema:      raw,
 		Run: func(ctx context.Context, input json.RawMessage) (string, error) {
+			if len(bytes.TrimSpace(input)) == 0 {
+				input = json.RawMessage("{}")
+			}
+			if err := checkRequired(schema, input, ""); err != nil {
+				return "", fmt.Errorf("bad input: %w", err)
+			}
 			var in In
-			if len(input) > 0 {
-				if err := json.Unmarshal(input, &in); err != nil {
-					return "", fmt.Errorf("bad input: %w", err)
-				}
+			dec := json.NewDecoder(bytes.NewReader(input))
+			dec.DisallowUnknownFields()
+			if err := dec.Decode(&in); err != nil {
+				return "", fmt.Errorf("bad input: %w", err)
 			}
 			return fn(ctx, in)
 		},
 	}, nil
 }
 
+// checkRequired reports the first required property missing (or null) anywhere in input.
+// Type mismatches and unknown fields are left to the decoder.
+func checkRequired(schema map[string]any, input json.RawMessage, path string) error {
+	if string(bytes.TrimSpace(input)) == "null" {
+		return nil // an absent optional value, required ones are caught by the parent
+	}
+	switch schema["type"] {
+	case "object":
+		var fields map[string]json.RawMessage
+		if json.Unmarshal(input, &fields) != nil {
+			return nil
+		}
+		props, _ := schema["properties"].(map[string]any)
+		if props == nil { // a map: every value has the additionalProperties schema
+			values, _ := schema["additionalProperties"].(map[string]any)
+			for name, v := range fields {
+				if err := checkRequired(values, v, path+name+"."); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+		required, _ := schema["required"].([]string)
+		for _, name := range required {
+			if v, ok := fields[name]; !ok || string(v) == "null" {
+				return fmt.Errorf("missing required field %s%s", path, name)
+			}
+		}
+		for name, v := range fields {
+			if prop, ok := props[name].(map[string]any); ok {
+				if err := checkRequired(prop, v, path+name+"."); err != nil {
+					return err
+				}
+			}
+		}
+
+	case "array":
+		items, _ := schema["items"].(map[string]any)
+		var elems []json.RawMessage
+		if items == nil || json.Unmarshal(input, &elems) != nil {
+			return nil
+		}
+		for i, v := range elems {
+			if err := checkRequired(items, v, fmt.Sprintf("%s%d.", path, i)); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+var (
+	rawMessageType    = reflect.TypeFor[json.RawMessage]()
+	timeType          = reflect.TypeFor[time.Time]()
+	jsonMarshalerType = reflect.TypeFor[json.Marshaler]()
+	textMarshalerType = reflect.TypeFor[encoding.TextMarshaler]()
+)
+
+func implements(t, iface reflect.Type) bool {
+	return t.Implements(iface) || reflect.PointerTo(t).Implements(iface)
+}
+
 func schemaOf(t reflect.Type, seen map[reflect.Type]bool) (map[string]any, error) {
+	// Custom encodings take precedence over the kind, as they do in encoding/json.
+	switch {
+	case t == rawMessageType:
+		return map[string]any{}, nil // any JSON value
+	case t == timeType:
+		return map[string]any{"type": "string", "format": "date-time"}, nil
+	case t.Kind() != reflect.Pointer && implements(t, jsonMarshalerType):
+		return map[string]any{}, nil // encoding unknown, accept any JSON value
+	case t.Kind() != reflect.Pointer && implements(t, textMarshalerType):
+		return map[string]any{"type": "string"}, nil
+	case t.Kind() == reflect.Slice && t.Elem().Kind() == reflect.Uint8:
+		return map[string]any{"type": "string", "contentEncoding": "base64"}, nil
+	}
+
 	switch t.Kind() {
 	case reflect.Pointer:
 		return schemaOf(t.Elem(), seen)
@@ -108,7 +208,7 @@ func structSchema(t reflect.Type, seen map[reflect.Type]bool) (map[string]any, e
 			continue
 		}
 
-		name, opts, _ := strings.Cut(f.Tag.Get("json"), ",")
+		name, rest, _ := strings.Cut(f.Tag.Get("json"), ",")
 		if name == "-" {
 			continue
 		}
@@ -125,7 +225,8 @@ func structSchema(t reflect.Type, seen map[reflect.Type]bool) (map[string]any, e
 		}
 
 		properties[name] = prop
-		if f.Type.Kind() != reflect.Pointer && !strings.Contains(opts, "omitempty") {
+		opts := strings.Split(rest, ",")
+		if f.Type.Kind() != reflect.Pointer && !slices.Contains(opts, "omitempty") && !slices.Contains(opts, "omitzero") {
 			required = append(required, name)
 		}
 	}

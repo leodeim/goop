@@ -223,3 +223,17 @@ func TestResponsesItems(t *testing.T) {
 		t.Fatal("empty Thinking block did not error")
 	}
 }
+
+func TestResponsesLargeCompletedEvent(t *testing.T) {
+	// response.completed carries the whole output on one SSE line
+	text := strings.Repeat("a", 4<<20)
+	stream := `data: {"type":"response.completed","response":{"status":"completed","output":[` +
+		`{"type":"message","content":[{"type":"output_text","text":"` + text + `"}]}]}}` + "\n\n"
+	reply, err := parseResponsesStream(strings.NewReader(stream), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := reply.Message.Blocks[0].(Text); !ok || len(got.Text) != len(text) {
+		t.Fatalf("text block of %d bytes lost", len(text))
+	}
+}

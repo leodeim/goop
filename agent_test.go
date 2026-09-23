@@ -340,6 +340,79 @@ func TestRunConfigErrors(t *testing.T) {
 	if err := runErr(&Agent{Provider: &fakeProvider{}, Model: "m", Tools: []Tool{dup, dup}}); err == nil {
 		t.Fatal("duplicate tool names did not error")
 	}
+
+	run := func(context.Context, json.RawMessage) (string, error) { return "", nil }
+	for name, tool := range map[string]Tool{
+		"empty name":  {Schema: json.RawMessage(`{}`), Run: run},
+		"nil run":     {Name: "t", Schema: json.RawMessage(`{}`)},
+		"nil schema":  {Name: "t", Run: run},
+		"non-object":  {Name: "t", Schema: json.RawMessage(`[]`), Run: run},
+		"broken json": {Name: "t", Schema: json.RawMessage(`{"type":`), Run: run},
+	} {
+		ok := &fakeProvider{replies: []Reply{{Message: Message{Role: Assistant, Blocks: []Block{Text{Text: "hi"}}}, StopReason: StopEnd}}}
+		if err := runErr(&Agent{Provider: ok, Model: "m", Tools: []Tool{tool}}); err == nil {
+			t.Errorf("%s: tool was accepted", name)
+		}
+	}
+}
+
+func TestRunToolUseWithEndStop(t *testing.T) {
+	// some OpenAI-compatible servers send finish_reason "stop" with tool calls
+	provider := &fakeProvider{replies: []Reply{
+		{
+			Message: Message{Role: Assistant, Blocks: []Block{
+				ToolUse{ID: "t1", Name: "echo", Input: json.RawMessage(`{"message":"hi"}`)},
+			}},
+			StopReason: StopEnd,
+		},
+		{Message: Message{Role: Assistant, Blocks: []Block{Text{Text: "done"}}}, StopReason: StopEnd},
+	}}
+	agent := &Agent{Provider: provider, Model: "m", Tools: []Tool{echoTool(t)}}
+
+	var done *Done
+	for ev, err := range agent.Run(t.Context(), nil, Text{Text: "go"}) {
+		if err != nil {
+			t.Fatalf("run error: %v", err)
+		}
+		if d, ok := ev.(Done); ok {
+			done = &d
+		}
+	}
+	if len(provider.calls) != 2 {
+		t.Fatalf("provider called %d times, want 2 (the tool call was not answered)", len(provider.calls))
+	}
+	if done == nil || len(done.Messages) != 4 {
+		t.Fatalf("done = %+v", done)
+	}
+	if res, ok := done.Messages[2].Blocks[0].(ToolResult); !ok || res.Content != "echo: hi" {
+		t.Fatalf("tool result = %+v", done.Messages[2])
+	}
+}
+
+func TestRunToolPanic(t *testing.T) {
+	boom := Tool{
+		Name:   "boom",
+		Schema: json.RawMessage(`{"type":"object"}`),
+		Run:    func(context.Context, json.RawMessage) (string, error) { panic("kaboom") },
+	}
+	provider := &fakeProvider{replies: []Reply{
+		{Message: Message{Role: Assistant, Blocks: []Block{ToolUse{ID: "t1", Name: "boom"}}}, StopReason: StopToolUse},
+		{Message: Message{Role: Assistant, Blocks: []Block{Text{Text: "ok"}}}, StopReason: StopEnd},
+	}}
+	agent := &Agent{Provider: provider, Model: "m", Tools: []Tool{boom}}
+
+	var ret *ToolReturn
+	for ev, err := range agent.Run(t.Context(), nil, Text{Text: "go"}) {
+		if err != nil {
+			t.Fatalf("run error: %v", err)
+		}
+		if r, ok := ev.(ToolReturn); ok {
+			ret = &r
+		}
+	}
+	if ret == nil || !ret.Result.IsError || ret.Result.Content != "tool panicked: kaboom" {
+		t.Fatalf("tool return = %+v", ret)
+	}
 }
 
 func TestRunMaxTokensDropsToolUse(t *testing.T) {
