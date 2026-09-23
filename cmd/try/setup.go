@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"goop"
+	"github.com/leodeim/goop"
 )
 
 var defaultEnvFile = func() string {

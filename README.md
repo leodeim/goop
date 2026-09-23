@@ -60,9 +60,9 @@ for ev, err := range agent.Run(ctx, conv, goop.Text{Text: "Will it rain in Paris
 | API | Messages | Responses | Chat Completions, plus compatible servers (OpenRouter, LM Studio, Ollama, …) |
 | Images | ✓ | ✓ | ✓ |
 | Documents (PDF) | ✓ | ✓ | – |
-| Streamed reasoning | ✓ | ✓ summaries | ✓ where the server sends it |
-| Reasoning kept across tool calls | ✓ | ✓ encrypted, `store:false` | – |
-| Prompt caching | ✓ automatic breakpoints | server side | server side |
+| Streamed reasoning | ✓ | ✓ | ✓ |
+| Reasoning kept across tool calls | ✓ | ✓ | – |
+| Prompt caching | ✓ | server side | server side |
 | Options | `Thinking` | `ReasoningEffort` | `ReasoningEffort`, `LegacyMaxTokens` |
 
 Every provider takes `APIKey`, `BaseURL` and `HTTP`. Swapping one for another
@@ -71,7 +71,6 @@ changes nothing else.
 ## Try it
 
 ```bash
-cp cmd/try/.env.example cmd/try/.env   # set GOOP_PROVIDER and GOOP_API_KEY
-go run ./cmd/try "Will it rain in Paris?"
-go run ./cmd/try                        # REPL; ctrl-c stops a turn, ctrl-d quits
+cp cmd/try/.env.example cmd/try/.env
+go run ./cmd/try
 ```

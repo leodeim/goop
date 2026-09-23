@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"goop"
+	"github.com/leodeim/goop"
 )
 
 func main() {
