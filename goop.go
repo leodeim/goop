@@ -116,6 +116,7 @@ type Reply struct {
 }
 
 // Event is anything Agent.Run yields: TextDelta, ThinkingDelta, ToolCall, ToolReturn or Done.
+// Router.Run yields a Routed before them.
 type Event interface{ isEvent() }
 
 // TextDelta is a chunk of streamed answer text.

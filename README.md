@@ -52,6 +52,7 @@ for ev, err := range agent.Run(ctx, conv, goop.Text{Text: "Will it rain in Paris
 | Safe streams | A dropped connection is `ErrTruncatedStream`, never a half answer |
 | Cancellation | Breaking out of the `range` loop cancels the request |
 | Jev | `Jev.Gate` approves tool calls with TypeSafe's System One model; `Jev.Tool` lets the model ask it |
+| Routing | `Router` asks jev which of your models fits each request and runs the agent there, see [Routing](#routing) |
 
 ## Providers
 
@@ -67,6 +68,46 @@ for ev, err := range agent.Run(ctx, conv, goop.Text{Text: "Will it rain in Paris
 
 Every provider takes `APIKey`, `BaseURL` and `HTTP`. Swapping one for another
 changes nothing else.
+
+## Routing
+
+`Router` sends each run to one of several provider/model pairs. Jev picks the
+route from the `When` descriptions and returns a probability for each one.
+
+```go
+router := &goop.Router{
+	Jev: &goop.Jev{APIKey: os.Getenv("TYPESAFE_API_KEY"), Model: "jev-1.13.0"},
+	Routes: []goop.Route{
+		{Name: "fast", When: "short factual questions and small talk",
+			Provider: anthropic, Model: "claude-haiku-4-5"},
+		{Name: "deep", When: "multi-step reasoning, code and analysis",
+			Provider: anthropic, Model: "claude-opus-5-5"},
+	},
+	Default:       "deep", // when jev fails, times out or is unsure
+	MinConfidence: 0.6,
+	Agent:         goop.Agent{System: system, Tools: tools},
+}
+
+for ev, err := range router.Run(ctx, conv, goop.Text{Text: question}) {
+	// the first event is goop.Routed{Route, Probabilities, Err}, then the usual events
+}
+```
+
+- **Data**: the latest user message goes to the jev API before any model sees
+  it. Set `Jev.URL` to a [laya-mlx](https://github.com/mizorewww/laya-mlx)
+  server to keep it on your machine.
+- **Cost**: every run adds one jev call (2s limit, `Router.Timeout`). It pays
+  off when the routes differ a lot in price or speed.
+- **Fails open**: if jev errors, times out or is below `MinConfidence`, the run
+  goes to `Default`. `Routed.Err` says why jev's answer was not used, so log it.
+- **Pin the jev model**: `jev-latest` changes over time, and your routing
+  changes with it.
+- **One route per run**: tool calls stay on the chosen route. Thinking blocks are
+  dropped from earlier turns, because a different provider cannot read them.
+- **Hard rules first**: conversations with a `Document` never go to `OpenAI`
+  (chat completions cannot read them).
+- **Check it on your traffic**: `Router.Pick` routes a conversation without
+  running it, so you can review picks before turning routing on.
 
 ## Try it
 
